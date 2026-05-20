@@ -5,9 +5,16 @@ build/
 dist/
 wheels/
 *.egg-info
+.python-version
+uv.lock
 
 # Virtual environments
 .venv
+.env
+
+# Dados brutos da camada Bronze
+data/
 
 # Project Overview
 judicial_analytics_platform.md
+

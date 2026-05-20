@@ -83,31 +83,3 @@ class DatajudClient:
                 if value:
                     return str(value)
         return f"HTTP {response.status_code}"
-
-
-# Teste básico
-if __name__ == "__main__":
-    client = DatajudClient(api_key="cDZHYzlZa0JadVREZDJCendQbXY6SkJlTzNjLV9TRENyQk1RdnFKZGRQdw==")
-    resultadoSC = client.search_page("TJSC", data_inicio="2024-01-01", data_fim="2024-01-31")
-    resultadoPR = client.search_page("TJPR", data_inicio="2024-01-01", data_fim="2024-01-31")
-    
-    hitsSC = resultadoSC["hits"]["hits"]
-    hitsPR = resultadoPR["hits"]["hits"]
-
-    for processo in hitsSC[:3]:
-        fonte = processo["_source"]
-        print(f"  Número: {fonte['numeroProcesso']}")
-        print(f"  Ajuizamento: {fonte['dataAjuizamento']}")
-        print(f"  Classe: {fonte['classe']['nome']}")
-        print(f"  Movimentos: {len(fonte['movimentos'])}")
-        print()
-        
-
-        
-    for processo in hitsPR[:3]:
-        fonte = processo["_source"]
-        print(f"  Número: {fonte['numeroProcesso']}")
-        print(f"  Ajuizamento: {fonte['dataAjuizamento']}")
-        print(f"  Classe: {fonte['classe']['nome']}")
-        print(f"  Movimentos: {len(fonte['movimentos'])}")
-        print()
