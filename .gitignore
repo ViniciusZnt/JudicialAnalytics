@@ -12,9 +12,10 @@ wheels/
 .venv
 .env
 
-# Dados brutos da camada Bronze
-data/
+# Dados brutos da camada Bronze (não versionar JSONs grandes)
+data/bronze/*.json
 
-# Project Overview
-judicial_analytics_platform.md
+# DuckDB
+*.duckdb
+*.duckdb.wal
 

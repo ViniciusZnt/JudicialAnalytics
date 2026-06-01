@@ -1,12 +1,18 @@
 [project]
-name = "juducialanalytics"
+name = "judicial-analytics"
 version = "0.1.0"
-description = "Plataforma de análise de dados judiciais"
+description = "Plataforma de análise de dados judiciais — DataJud + CNJ"
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
-    "python-dotenv>=1.0",
+    # ingestão
     "requests>=2.32",
+    "python-dotenv>=1.0",
+    # modelagem
+    "dbt-duckdb>=1.9",
+    # dashboard
+    "streamlit>=1.40",
+    "duckdb>=1.1",
 ]
 
 [build-system]
@@ -15,4 +21,4 @@ build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["ingestion*"]
+include = ["ingestion*", "dashboard*"]
