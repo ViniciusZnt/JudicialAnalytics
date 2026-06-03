@@ -19,3 +19,5 @@ data/bronze/*.json
 *.duckdb
 *.duckdb.wal
 
+
+judicial_analytics_platform*

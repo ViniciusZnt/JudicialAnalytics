@@ -1,0 +1,44 @@
+name: Pipeline Judicial
+
+on:
+  schedule:
+    - cron: '0 6 * * *'
+  workflow_dispatch:
+    inputs:
+      inicio:
+        description: 'Data início (YYYY-MM-DD)'
+        required: true
+        default: '2025-01-01'
+      fim:
+        description: 'Data fim (YYYY-MM-DD)'
+        required: true
+        default: '2025-12-31'
+
+jobs:
+  ingestao:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Instalar dependências
+        run: pip install requests boto3 python-dotenv
+
+      - name: Ingerir DataJud → S3
+        env:
+          DATAJUD_API_KEY:       ${{ secrets.DATAJUD_API_KEY }}
+          AWS_ACCESS_KEY_ID:     ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION:    ${{ secrets.AWS_DEFAULT_REGION }}
+          DATA_INICIO: ${{ github.event.inputs.inicio }}
+          DATA_FIM:    ${{ github.event.inputs.fim }}
+        run: python -m ingestion.ingest_bronze
+
+      - name: Disparar Databricks Job
+        env:
+          DATABRICKS_HOST:  ${{ secrets.DATABRICKS_HOST }}
+          DATABRICKS_TOKEN: ${{ secrets.DATABRICKS_TOKEN }}
+        run: python -m ingestion.trigger_databricks_job

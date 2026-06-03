@@ -1,11 +1,13 @@
+import logging
+import time
+from collections.abc import Iterator
+
 import requests
 
 DEFAULT_BASE_URL = "https://api-publica.datajud.cnj.jus.br/"
 
-TRIBUNAIS = {
-    "TJSC": "api_publica_tjsc/_search",
-    "TJPR": "api_publica_tjpr/_search",
-}
+logger = logging.getLogger(__name__)
+
 
 class ApiResponseError(RuntimeError):
     pass
@@ -30,10 +32,10 @@ class DatajudClient:
         })
 
     def search_page(self, tribunal: str, data_inicio: str, data_fim: str, search_after: list = None) -> dict:
-        url = self.base_url + TRIBUNAIS[tribunal]
+        url = self.base_url + f"api_publica_{tribunal.lower()}/_search"
 
         body = {
-            "size": 100,
+            "size": 10000,
             "query": {
                 "range": {
                     "dataAjuizamento": {
@@ -66,7 +68,25 @@ class DatajudClient:
         if response.status_code >= 500:
             raise TransientApiError(self._extract_message(payload, response))
         raise ApiResponseError(self._extract_message(payload, response))
-        
+
+    def paginate(self, tribunal: str, data_inicio: str, data_fim: str) -> Iterator[list[dict]]:
+        search_after = None
+        page = 1
+
+        while True:
+            response = self.search_page(tribunal, data_inicio, data_fim, search_after=search_after)
+            hits = response["hits"]["hits"]
+
+            if not hits:
+                logger.info("Paginação concluída após %d páginas.", page - 1)
+                break
+
+            logger.info("Página %d — %d processos recebidos.", page, len(hits))
+            yield hits
+
+            search_after = hits[-1]["sort"]
+            page += 1
+            time.sleep(0.5)
 
     @staticmethod
     def _safe_json(response):

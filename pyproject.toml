@@ -9,10 +9,11 @@ dependencies = [
     "requests>=2.32",
     "python-dotenv>=1.0",
     # modelagem
-    "dbt-duckdb>=1.9",
+    "dbt>=1.0.0.40.17",
     # dashboard
     "streamlit>=1.40",
-    "duckdb>=1.1",
+    # conexão Cloud
+    "boto3>=1.43.22"
 ]
 
 [build-system]
