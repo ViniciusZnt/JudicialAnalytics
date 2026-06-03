@@ -1,84 +1,128 @@
 import json
 import logging
 import os
-from datetime import date, timedelta
+import time
+from datetime import date
 
 import boto3
 from botocore.exceptions import ClientError
 from dotenv import load_dotenv
 
-from ingestion.datajud_client import DatajudClient
+from ingestion.datajud_client import DatajudClient, TransientApiError
 
 load_dotenv()
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 logger = logging.getLogger(__name__)
 
-BUCKET            = "judicial-analytics-storage"
-TRIBUNAIS         = ["TJRS", "TJSC", "TJPR", "TJSP"]
-WATERMARK_KEY     = "state/watermark.json"
-DATA_INICIO_PADRAO = "2024-01-01"        # usado só na primeira execução
-
-# Aqui é utilizado um watermark para que o github actions saiba qual execução ele parou
+BUCKET             = "judicial-analytics-storage"
+TRIBUNAIS          = ["TJRS", "TJSC", "TJPR", "TJSP"]
+WATERMARK_KEY      = "state/watermark.json"
+DATA_INICIO_PADRAO = "2024-01-01"
+MAX_TENTATIVAS     = 3
+ESPERA_BASE        = 10  # segundos entre tentativas
 
 
 # ── Watermark ────────────────────────────────────────────────────────────────
 
 def ler_watermark(s3) -> dict:
     """Retorna o último data_fim processado por tribunal."""
+    logger.info("[WATERMARK] Lendo watermark do S3: s3://%s/%s", BUCKET, WATERMARK_KEY)
     try:
         obj = s3.get_object(Bucket=BUCKET, Key=WATERMARK_KEY)
-        return json.loads(obj["Body"].read())
+        watermark = json.loads(obj["Body"].read())
+        logger.info("[WATERMARK] Watermark encontrado: %s", watermark)
+        return watermark
     except ClientError as e:
         if e.response["Error"]["Code"] == "NoSuchKey":
+            logger.info("[WATERMARK] Nenhum watermark encontrado — primeira execução, iniciando do zero")
             return {}
         raise
 
 
 def salvar_watermark(s3, watermark: dict) -> None:
+    logger.info("[WATERMARK] Salvando watermark atualizado: %s", watermark)
     s3.put_object(
         Bucket=BUCKET,
         Key=WATERMARK_KEY,
         Body=json.dumps(watermark, indent=2),
         ContentType="application/json",
     )
-    logger.info("Watermark atualizado: %s", watermark)
+    logger.info("[WATERMARK] Watermark salvo com sucesso em s3://%s/%s", BUCKET, WATERMARK_KEY)
 
 
 # ── Ingestão ─────────────────────────────────────────────────────────────────
 
 def ingerir_tribunal(client: DatajudClient, s3, tribunal: str,
                      data_inicio: str, data_fim: str) -> bool:
-    logger.info("%s: buscando %s → %s", tribunal, data_inicio, data_fim)
-    dados = []
 
-    for hits in client.paginate(tribunal, data_inicio, data_fim):
-        dados.extend(hits)
+    for tentativa in range(1, MAX_TENTATIVAS + 1):
+        logger.info("[%s] Tentativa %d/%d — buscando processos de %s até %s",
+                    tribunal, tentativa, MAX_TENTATIVAS, data_inicio, data_fim)
+        try:
+            dados = []
+            pagina = 1
 
-    if not dados:
-        logger.warning("%s: nenhum registro encontrado", tribunal)
-        return False
+            for hits in client.paginate(tribunal, data_inicio, data_fim):
+                dados.extend(hits)
+                logger.info("[%s] Página %d recebida — %d registros acumulados até agora",
+                            tribunal, pagina, len(dados))
+                pagina += 1
 
-    key = f"bronze/raw_files/{tribunal}/{data_inicio}_{data_fim}.json"
-    s3.put_object(
-        Bucket=BUCKET,
-        Key=key,
-        Body=json.dumps(dados, ensure_ascii=False),
-        ContentType="application/json",
-    )
-    logger.info("%s: %d registros → s3://%s/%s", tribunal, len(dados), BUCKET, key)
-    return True
+            if not dados:
+                logger.warning("[%s] Nenhum registro encontrado no período %s → %s",
+                               tribunal, data_inicio, data_fim)
+                return False
 
+            logger.info("[%s] Paginação concluída — total de %d registros coletados",
+                        tribunal, len(dados))
+
+            key = f"bronze/raw_files/{tribunal}/{data_inicio}_{data_fim}.json"
+            logger.info("[%s] Gravando arquivo no S3: s3://%s/%s", tribunal, BUCKET, key)
+            s3.put_object(
+                Bucket=BUCKET,
+                Key=key,
+                Body=json.dumps(dados, ensure_ascii=False),
+                ContentType="application/json",
+            )
+            logger.info("[%s] Arquivo gravado com sucesso — %d registros em s3://%s/%s",
+                        tribunal, len(dados), BUCKET, key)
+            return True
+
+        except TransientApiError as e:
+            if tentativa == MAX_TENTATIVAS:
+                logger.error("[%s] Falhou após %d tentativas — abortando este tribunal. Erro: %s",
+                             tribunal, MAX_TENTATIVAS, e)
+                return False
+            espera = ESPERA_BASE * tentativa
+            logger.warning("[%s] Erro transiente na tentativa %d/%d — aguardando %ds antes de tentar novamente. Erro: %s",
+                           tribunal, tentativa, MAX_TENTATIVAS, espera, e)
+            time.sleep(espera)
+
+    return False
+
+
+# ── Main ─────────────────────────────────────────────────────────────────────
 
 def main() -> None:
-    client    = DatajudClient(api_key=os.environ["DATAJUD_API_KEY"])
+    logger.info("[INICIO] Iniciando pipeline de ingestão DataJud")
+    logger.info("[INICIO] Tribunais configurados: %s", TRIBUNAIS)
+
+    client    = DatajudClient(api_key=os.environ["DATAJUD_API_KEY"], timeout=60)
     s3        = boto3.client("s3")
     watermark = ler_watermark(s3)
 
-    # Override manual via env (workflow_dispatch) — senão usa watermark
     data_fim_global = os.getenv("DATA_FIM") or str(date.today())
+    logger.info("[CONFIG] Data fim global: %s", data_fim_global)
+
+    origem_inicio = "variável de ambiente (override manual)" if os.getenv("DATA_INICIO") else "watermark ou padrão"
+    logger.info("[CONFIG] Origem do data_inicio: %s", origem_inicio)
+
+    resultados = {}
 
     for tribunal in TRIBUNAIS:
-        # DATA_INICIO: override manual > watermark > padrão inicial
+        logger.info("=" * 60)
+        logger.info("[%s] Iniciando processamento", tribunal)
+
         data_inicio = (
             os.getenv("DATA_INICIO")
             or watermark.get(tribunal)
@@ -86,16 +130,33 @@ def main() -> None:
         )
         data_fim = data_fim_global
 
+        if watermark.get(tribunal):
+            logger.info("[%s] Watermark encontrado — continuando de %s", tribunal, watermark.get(tribunal))
+        else:
+            logger.info("[%s] Sem watermark — usando data padrão de início: %s", tribunal, DATA_INICIO_PADRAO)
+
         if data_inicio >= data_fim:
-            logger.info("%s: já atualizado até %s, pulando", tribunal, data_inicio)
+            logger.info("[%s] Já atualizado até %s — nada a buscar, pulando", tribunal, data_inicio)
+            resultados[tribunal] = "pulado"
             continue
 
         sucesso = ingerir_tribunal(client, s3, tribunal, data_inicio, data_fim)
 
         if sucesso:
-            watermark[tribunal] = data_fim  # avança o ponteiro
+            watermark[tribunal] = data_fim
+            resultados[tribunal] = "sucesso"
+            logger.info("[%s] Processamento concluído — watermark avançado para %s", tribunal, data_fim)
+        else:
+            resultados[tribunal] = "falhou"
+            logger.warning("[%s] Processamento falhou — watermark NÃO foi avançado", tribunal)
+
+    logger.info("=" * 60)
+    logger.info("[FIM] Resumo da execução:")
+    for tribunal, status in resultados.items():
+        logger.info("  %s → %s", tribunal, status)
 
     salvar_watermark(s3, watermark)
+    logger.info("[FIM] Pipeline de ingestão finalizado")
 
 
 if __name__ == "__main__":
