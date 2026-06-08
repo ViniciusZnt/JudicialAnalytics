@@ -2,22 +2,51 @@
 
 Plataforma analítica operacional do Judiciário brasileiro construída sobre dados públicos do CNJ.
 
-Transforma eventos processuais brutos da API DataJud em métricas operacionais estruturadas — tempo médio de processamento, taxa de congestionamento, gargalos por fase — cruzadas com os indicadores oficiais do Justiça em Números.
+Transforma eventos processuais brutos da API DataJud em métricas operacionais estruturadas — tempo médio de processamento, taxa de congestionamento, gargalos por fase — usando uma arquitetura medalhão em nuvem.
 
 ## Stack
 
 | Camada | Tecnologia |
 |---|---|
-| Ingestão | Python + requests |
-| Bronze | Arquivos JSON locais (`data/bronze/`) |
-| Transformação | dbt-duckdb |
-| Banco analítico | DuckDB |
+| Ingestão | Python + requests → **AWS S3** |
+| Bronze | Arquivos JSON particionados no S3 (`bronze/raw_files/{tribunal}/`) |
+| Silver | **Databricks** (notebooks PySpark) |
+| Gold | **dbt-Databricks** (modelo estrela no Unity Catalog) |
+| Orquestração | **GitHub Actions** (trigger manual + agendamento) |
 | Dashboard | Streamlit |
+
+## Arquitetura
+
+```
+API DataJud
+    │
+    ▼
+GitHub Actions (pipeline.yml)
+    │
+    ├─ ingestion/ingest_bronze.py ──► S3 (bronze/raw_files/{tribunal}/)
+    │       watermark em state/watermark.json
+    │
+    └─ ingestion/trigger_databricks_job.py ──► Databricks Job
+                                                    │
+                                              notebooks/
+                                              ├── load_bronze.ipynb   (S3 → Delta Bronze)
+                                              └── silver_databricks.ipynb (Bronze → Silver)
+                                                    │
+                                              dbt (Unity Catalog: judicial.gold)
+                                              ├── dim_tribunais
+                                              ├── dim_classes
+                                              ├── dim_assuntos
+                                              ├── dim_orgaos
+                                              ├── dim_calendario
+                                              └── fato_movimentos (incremental)
+```
 
 ## Pré-requisitos
 
 - Python 3.13+
 - [uv](https://docs.astral.sh/uv/getting-started/installation/) — gerenciador de pacotes
+- Conta AWS com bucket S3 `judicial-analytics-storage`
+- Workspace Databricks com Unity Catalog
 
 ## Setup
 
@@ -42,43 +71,60 @@ Crie um arquivo `.env` na raiz do projeto:
 cp .env.example .env
 ```
 
-Edite `.env` e preencha sua chave da API DataJud:
+Preencha as credenciais:
 
 ```env
+# API DataJud (gratuita — solicite em datajud-wiki.cnj.jus.br)
 DATAJUD_API_KEY=sua_chave_aqui
+
+# AWS
+AWS_ACCESS_KEY_ID=...
+AWS_SECRET_ACCESS_KEY=...
+AWS_DEFAULT_REGION=us-east-1
+
+# Databricks
+DATABRICKS_HOST=https://dbc-xxxx.cloud.databricks.com
+DATABRICKS_TOKEN=...
+DATABRICKS_JOB_ID=...
 ```
 
-A chave é gratuita — solicite em [datajud-wiki.cnj.jus.br](https://datajud-wiki.cnj.jus.br/).
-
 ### 4. Configurar o dbt
+
+Edite `dbt/profiles.yml` com o host e http_path do seu Databricks SQL Warehouse:
 
 ```bash
 uv run dbt deps --project-dir dbt/
 ```
 
-Isso instala o pacote `dbt-utils` declarado em `dbt/packages.yml`.
+## Pipeline
 
-## Executar o pipeline completo
+### Execução via GitHub Actions (recomendado)
 
-```bash
-uv run python run_pipeline.py
-```
+Vá em **Actions → Pipeline Judicial → Run workflow** e informe o intervalo de datas:
 
-O pipeline executa em sequência:
+| Input | Descrição | Padrão |
+|---|---|---|
+| `inicio` | Data início (YYYY-MM-DD) | `2025-01-01` |
+| `fim` | Data fim (YYYY-MM-DD) | `2025-12-31` |
 
-1. Ingestão da API DataJud → `data/bronze/`
-2. Ingestão do Justiça em Números → `data/bronze/`
-3. `dbt run` — staging + marts no DuckDB
-4. `dbt test` — validação de qualidade
+O workflow executa em sequência:
+1. Ingestão DataJud → S3 (`ingestion/ingest_bronze.py`)
+2. Trigger do Databricks Job (Bronze → Silver)
+3. O job Databricks roda os notebooks e pode encadear o `dbt run`
 
-## Executar etapas individualmente
+### Execução local
 
 **Só ingestão:**
 ```bash
-uv run python ingestion/fetch_datajud.py --tribunais TJSC,TJPR --inicio 2023-01-01
+uv run python -m ingestion.ingest_bronze
 ```
 
-**Só transformações dbt:**
+**Disparar job Databricks:**
+```bash
+uv run python -m ingestion.trigger_databricks_job
+```
+
+**Só transformações dbt (requer Databricks acessível):**
 ```bash
 uv run dbt run --project-dir dbt/
 uv run dbt test --project-dir dbt/
@@ -92,80 +138,72 @@ uv run streamlit run dashboard/app.py
 ## Estrutura do projeto
 
 ```
-judicial-analytics/
+JudicialAnalytics/
 │
 ├── ingestion/
-│   ├── datajud_client.py     # cliente HTTP da API DataJud
-│   ├── core_ingestion.py     # paginação com search_after
-│   └── fetch_datajud.py      # script principal de ingestão
+│   ├── datajud_client.py          # cliente HTTP da API DataJud (paginação search_after)
+│   ├── ingest_bronze.py           # ingestão com watermark → S3
+│   ├── trigger_databricks_job.py  # dispara job Databricks via REST API
+│   └── test/
+│       └── fetch_datajud.py       # testes de integração da ingestão
 │
-├── data/
-│   └── bronze/               # JSONs brutos por tribunal/data (gitignored)
+├── notebooks/
+│   ├── load_bronze.ipynb          # S3 → Delta Bronze no Databricks
+│   └── silver_databricks.ipynb    # Bronze → Silver (limpeza PySpark)
 │
 ├── dbt/
 │   ├── models/
-│   │   ├── staging/          # limpeza, parse, campos calculados
-│   │   └── marts/            # dimensões, fatos, agregações
-│   ├── tests/                # testes customizados
-│   ├── packages.yml          # dbt-utils
+│   │   ├── sources.yml            # fonte: camada Silver do Databricks
+│   │   └── marts/                 # camada Gold — modelo estrela
+│   │       ├── dim_tribunais.sql
+│   │       ├── dim_classes.sql
+│   │       ├── dim_assuntos.sql
+│   │       ├── dim_orgaos.sql
+│   │       ├── dim_calendario.sql
+│   │       ├── fato_movimentos.sql  (incremental)
+│   │       └── schema.yml           # testes dbt
+│   ├── profiles.yml               # conexão Databricks SQL Warehouse
 │   └── dbt_project.yml
 │
 ├── dashboard/
-│   └── app.py                # Streamlit
+│   └── app.py                     # Streamlit
 │
-├── run_pipeline.py           # executa tudo em sequência
-├── pyproject.toml
-└── judicial_analytics_platform.md   # especificação técnica completa
+├── .github/
+│   └── workflows/
+│       └── pipeline.yml           # GitHub Actions — trigger manual
+│
+└── pyproject.toml
 ```
 
-## Escopo do MVP
+## Modelo de dados (Gold)
 
-- **Tribunais:** TJSC e TJPR
-- **Período:** 2023–2024
-- **Grau:** Primeiro grau (G1)
-- **Métricas:** TMP, taxa de congestionamento, gargalo por fase, benchmarking DataJud × Justiça em Números
+O dbt materializa um modelo estrela no Unity Catalog `judicial.gold`:
 
-## DuckDB — banco analítico local
-
-O projeto usa DuckDB como banco analítico. Ao contrário de um banco servidor, DuckDB é um único arquivo (`judicial.duckdb`) gerado pelo `dbt run` e consultado diretamente — sem processo separado rodando.
-
-O dbt organiza as tabelas em dois schemas dentro do arquivo:
-
-| Schema | Conteúdo | Equivalente na arquitetura medalhão |
+| Tabela | Tipo | Descrição |
 |---|---|---|
-| `staging` | `stg_datajud__*`, `stg_jen__*` | Silver — dados limpos e normalizados |
-| `marts` | `dim_*`, `fato_*`, `agg_*` | Gold — modelo estrela pronto para análise |
+| `dim_tribunais` | dimensão | Uma linha por tribunal (TJRS, TJSC, TJPR, TJSP) |
+| `dim_classes` | dimensão | Classes processuais CNJ |
+| `dim_assuntos` | dimensão | Assuntos processuais CNJ |
+| `dim_orgaos` | dimensão | Órgãos julgadores (varas, câmaras) |
+| `dim_calendario` | dimensão | Datas de 2020 até hoje |
+| `fato_movimentos` | fato incremental | Um evento por linha — `dias_desde_ajuizamento`, FKs para todas as dimensões |
 
-A camada Bronze não fica no DuckDB — são os arquivos JSON em `data/bronze/`, lidos diretamente pelo dbt via `read_json()` do DuckDB.
+## Watermark e idempotência
 
-**Consultar o banco pelo terminal:**
+A ingestão mantém um arquivo `state/watermark.json` no S3 com o último `data_fim` processado por tribunal. Isso garante que reexecuções não reprocessem dados já ingeridos e que o pipeline possa ser retomado após falha.
 
-```bash
-uv run duckdb judicial.duckdb
-```
+Prioridade do `data_inicio` por tribunal:
+1. Watermark no S3 (execuções anteriores)
+2. Variável de ambiente `DATA_INICIO` (override manual)
+3. Padrão hardcoded `2024-01-01`
 
-Exemplos de consulta:
+## Escopo atual
 
-```sql
--- listar todas as tabelas
-SHOW ALL TABLES;
-
--- ver os processos na staging
-SELECT * FROM staging.stg_datajud__processos LIMIT 10;
-
--- consulta analítica: TMP médio por tribunal
-SELECT
-    t.nome_tribunal,
-    AVG(f.dias_desde_ajuizamento) AS tmp_medio_dias
-FROM marts.fato_movimentos f
-JOIN marts.dim_tribunais t ON f.sk_tribunal = t.sk_tribunal
-WHERE f.is_ultimo_movimento = true
-GROUP BY t.nome_tribunal
-ORDER BY tmp_medio_dias DESC;
-```
+- **Tribunais:** TJRS, TJSC, TJPR, TJSP
+- **Período:** 2024 em diante (configurável)
+- **Grau:** Primeiro grau (G1)
+- **Métricas disponíveis na Gold:** TMP (`dias_desde_ajuizamento`), volume por tribunal/classe/órgão/período
 
 ## Dados
 
-Os arquivos JSON da camada bronze não são versionados (`.gitignore`). Para regenerar, execute a etapa de ingestão com suas credenciais.
-
-O banco DuckDB (`judicial.duckdb`) também não é versionado — é gerado localmente pelo `dbt run`.
+Os arquivos JSON da camada bronze ficam no S3 (`s3://judicial-analytics-storage/bronze/`) e não são versionados. Para regenerar, execute a etapa de ingestão com suas credenciais.
