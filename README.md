@@ -2,208 +2,101 @@
 
 Plataforma analítica operacional do Judiciário brasileiro construída sobre dados públicos do CNJ.
 
-Transforma eventos processuais brutos da API DataJud em métricas operacionais estruturadas — tempo médio de processamento, taxa de congestionamento, gargalos por fase — usando uma arquitetura medalhão em nuvem.
+Transforma eventos processuais brutos da API DataJud em métricas operacionais estruturadas — tempo médio de processamento, taxa de congestionamento e gargalos por fase — organizadas em uma arquitetura medalhão (Bronze → Silver → Gold) em nuvem.
 
 ## Stack
 
-| Camada | Tecnologia |
-|---|---|
-| Ingestão | Python + requests → **AWS S3** |
-| Bronze | Arquivos JSON particionados no S3 (`bronze/raw_files/{tribunal}/`) |
-| Silver | **Databricks** (notebooks PySpark) |
-| Gold | **dbt-Databricks** (modelo estrela no Unity Catalog) |
-| Orquestração | **GitHub Actions** (trigger manual + agendamento) |
-| Dashboard | Streamlit |
+| Camada | Tecnologia | Responsabilidade |
+|---|---|---|
+| Ingestão | Python + boto3 (GitHub Actions) | Única camada com acesso à internet — pagina a API e grava no S3 |
+| Storage | AWS S3 + Delta Lake (Unity Catalog) | Bronze, Silver e Gold em arquivos Delta |
+| Transformação | dbt-databricks + SQL Warehouse | SQL puro, sem PySpark — menor custo de DBU |
+| Orquestração | GitHub Actions → Databricks Jobs | Actions agenda e dispara; Jobs executa as tasks |
+| Visualização | Databricks SQL Dashboards | Conecta direto nas tabelas Gold |
 
-## Arquitetura
+## Fontes de dados
 
-```
-API DataJud
-    │
-    ▼
-GitHub Actions (pipeline.yml)
-    │
-    ├─ ingestion/ingest_bronze.py ──► S3 (bronze/raw_files/{tribunal}/)
-    │       watermark em state/watermark.json
-    │
-    └─ ingestion/trigger_databricks_job.py ──► Databricks Job
-                                                    │
-                                              notebooks/
-                                              ├── load_bronze.ipynb   (S3 → Delta Bronze)
-                                              └── silver_databricks.ipynb (Bronze → Silver)
-                                                    │
-                                              dbt (Unity Catalog: judicial.gold)
-                                              ├── dim_tribunais
-                                              ├── dim_classes
-                                              ├── dim_assuntos
-                                              ├── dim_orgaos
-                                              ├── dim_calendario
-                                              └── fato_movimentos (incremental)
-```
+- **DataJud (CNJ)** — API REST sobre Elasticsearch. Eventos processuais com paginação `search_after`. Campos-chave: `numeroProcesso`, `tribunal`, `dataAjuizamento`, `classeProcessual`, `movimentos[]`, `grau`.
+- **Tabelas unificadas CNJ** — classes, assuntos e movimentos processuais (de/para dos códigos).
+
+**Tribunais cobertos:** TJRS, TJSC, TJPR, TJSP — primeiro grau (G1).
 
 ## Pré-requisitos
 
-- Python 3.13+
-- [uv](https://docs.astral.sh/uv/getting-started/installation/) — gerenciador de pacotes
+- Python 3.13+ e [uv](https://docs.astral.sh/uv/getting-started/installation/)
 - Conta AWS com bucket S3 `judicial-analytics-storage`
-- Workspace Databricks com Unity Catalog
+- Workspace Databricks com Unity Catalog habilitado (catálogo `judicial`, schemas `bronze`/`silver`/`gold`)
 
-## Setup
+## Como rodar
 
-### 1. Clonar o repositório
+O pipeline é acionado pelo GitHub Actions. Vá em **Actions → Pipeline Judicial → Run workflow**, informe as datas de início e fim, e o workflow:
 
-```bash
-git clone https://github.com/ViniciusZnt/JudicialAnalytics.git
-cd JudicialAnalytics
-```
-
-### 2. Instalar dependências
-
-```bash
-uv sync
-```
-
-### 3. Configurar variáveis de ambiente
-
-Crie um arquivo `.env` na raiz do projeto:
-
-```bash
-cp .env.example .env
-```
-
-Preencha as credenciais:
-
-```env
-# API DataJud (gratuita — solicite em datajud-wiki.cnj.jus.br)
-DATAJUD_API_KEY=sua_chave_aqui
-
-# AWS
-AWS_ACCESS_KEY_ID=...
-AWS_SECRET_ACCESS_KEY=...
-AWS_DEFAULT_REGION=us-east-1
-
-# Databricks
-DATABRICKS_HOST=https://dbc-xxxx.cloud.databricks.com
-DATABRICKS_TOKEN=...
-DATABRICKS_JOB_ID=...
-```
-
-### 4. Configurar o dbt
-
-Edite `dbt/profiles.yml` com o host e http_path do seu Databricks SQL Warehouse:
-
-```bash
-uv run dbt deps --project-dir dbt/
-```
-
-## Pipeline
-
-### Execução via GitHub Actions (recomendado)
-
-Vá em **Actions → Pipeline Judicial → Run workflow** e informe o intervalo de datas:
-
-| Input | Descrição | Padrão |
-|---|---|---|
-| `inicio` | Data início (YYYY-MM-DD) | `2025-01-01` |
-| `fim` | Data fim (YYYY-MM-DD) | `2025-12-31` |
-
-O workflow executa em sequência:
-1. Ingestão DataJud → S3 (`ingestion/ingest_bronze.py`)
-2. Trigger do Databricks Job (Bronze → Silver)
-3. O job Databricks roda os notebooks e pode encadear o `dbt run`
+1. **Ingestão** — pagina a API DataJud e grava os JSONs no S3 (`bronze/raw_files/{tribunal}/`)
+2. **Trigger** — dispara o Databricks Job, que executa em sequência:
+   - `load_bronze` — lê os JSONs do S3, faz merge na tabela Delta Bronze e move os arquivos para `processados/`
+   - `dbt run --select staging` — parsing, tipagem e explode dos movimentos (Silver)
+   - `dbt run --select marts` — modelo estrela (Gold)
+   - `dbt test` — se falhar, o Job para e o dashboard mantém os dados da execução anterior
 
 ### Execução local
 
-**Só ingestão:**
 ```bash
-uv run python -m ingestion.ingest_bronze
-```
+uv sync                                      # instalar dependências
+uv run dbt deps --project-dir dbt/           # instalar dbt-utils
 
-**Disparar job Databricks:**
-```bash
-uv run python -m ingestion.trigger_databricks_job
-```
-
-**Só transformações dbt (requer Databricks acessível):**
-```bash
-uv run dbt run --project-dir dbt/
+uv run python -m ingestion.ingest_bronze     # só ingestão → S3
+uv run dbt run  --project-dir dbt/           # só transformações (requer SQL Warehouse)
 uv run dbt test --project-dir dbt/
 ```
 
-**Dashboard:**
-```bash
-uv run streamlit run dashboard/app.py
-```
+## Configuração
 
-## Estrutura do projeto
+Cadastre os secrets em **Settings → Secrets and variables → Actions**:
 
-```
-JudicialAnalytics/
-│
-├── ingestion/
-│   ├── datajud_client.py          # cliente HTTP da API DataJud (paginação search_after)
-│   ├── ingest_bronze.py           # ingestão com watermark → S3
-│   ├── trigger_databricks_job.py  # dispara job Databricks via REST API
-│   └── test/
-│       └── fetch_datajud.py       # testes de integração da ingestão
-│
-├── notebooks/
-│   ├── load_bronze.ipynb          # S3 → Delta Bronze no Databricks
-│   └── silver_databricks.ipynb    # Bronze → Silver (limpeza PySpark)
-│
-├── dbt/
-│   ├── models/
-│   │   ├── sources.yml            # fonte: camada Silver do Databricks
-│   │   └── marts/                 # camada Gold — modelo estrela
-│   │       ├── dim_tribunais.sql
-│   │       ├── dim_classes.sql
-│   │       ├── dim_assuntos.sql
-│   │       ├── dim_orgaos.sql
-│   │       ├── dim_calendario.sql
-│   │       ├── fato_movimentos.sql  (incremental)
-│   │       └── schema.yml           # testes dbt
-│   ├── profiles.yml               # conexão Databricks SQL Warehouse
-│   └── dbt_project.yml
-│
-├── dashboard/
-│   └── app.py                     # Streamlit
-│
-├── .github/
-│   └── workflows/
-│       └── pipeline.yml           # GitHub Actions — trigger manual
-│
-└── pyproject.toml
-```
+| Secret | Origem |
+|---|---|
+| `DATAJUD_API_KEY` | [datajud-wiki.cnj.jus.br](https://datajud-wiki.cnj.jus.br/) (gratuita) |
+| `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` | IAM User com acesso ao bucket S3 |
+| `AWS_DEFAULT_REGION` | Região do bucket (ex: `us-east-1`) |
+| `DATABRICKS_HOST` | URL base do workspace (sem path `/browse?o=...`) |
+| `DATABRICKS_TOKEN` | Settings → Developer → Access tokens |
+| `DATABRICKS_JOB_ID` | ID do job criado no Databricks |
 
-## Modelo de dados (Gold)
+Edite [dbt/profiles.yml](dbt/profiles.yml) com o `host` e `http_path` do seu SQL Warehouse.
 
-O dbt materializa um modelo estrela no Unity Catalog `judicial.gold`:
+> Para testes locais sem o Actions, copie `.env.example` para `.env` (contém só `DATAJUD_API_KEY`) e exporte as variáveis AWS/Databricks no shell.
 
-| Tabela | Tipo | Descrição |
+## Modelo de dados (Gold — `judicial.gold`)
+
+Modelo estrela com surrogate keys via `dbt_utils.generate_surrogate_key`. A fato contém apenas FKs e métricas.
+
+| Tabela | Materialização | Descrição |
 |---|---|---|
-| `dim_tribunais` | dimensão | Uma linha por tribunal (TJRS, TJSC, TJPR, TJSP) |
-| `dim_classes` | dimensão | Classes processuais CNJ |
-| `dim_assuntos` | dimensão | Assuntos processuais CNJ |
-| `dim_orgaos` | dimensão | Órgãos julgadores (varas, câmaras) |
-| `dim_calendario` | dimensão | Datas de 2020 até hoje |
-| `fato_movimentos` | fato incremental | Um evento por linha — `dias_desde_ajuizamento`, FKs para todas as dimensões |
+| `dim_tribunais`, `dim_classes`, `dim_assuntos`, `dim_orgaos` | `table` | Dimensões descritivas |
+| `dim_calendario` | `table` | Datas de 2020 até hoje |
+| `fato_movimentos` | `incremental` (merge) | Um evento por linha |
 
-## Watermark e idempotência
+Métricas em `fato_movimentos`: `dias_desde_ajuizamento`, `dias_desde_ultimo_movimento`, `is_ultimo_movimento`.
 
-A ingestão mantém um arquivo `state/watermark.json` no S3 com o último `data_fim` processado por tribunal. Isso garante que reexecuções não reprocessem dados já ingeridos e que o pipeline possa ser retomado após falha.
+Testes dbt garantem qualidade: `not_null`/`unique` nas chaves, `relationships` entre fato e dimensões, e `dias_desde_ajuizamento >= 0`.
 
-Prioridade do `data_inicio` por tribunal:
-1. Watermark no S3 (execuções anteriores)
-2. Variável de ambiente `DATA_INICIO` (override manual)
-3. Padrão hardcoded `2024-01-01`
+## Estrutura
 
-## Escopo atual
+```
+ingestion/
+  datajud_client.py          # cliente HTTP com paginação search_after
+  ingest_bronze.py           # ingestão + watermark → S3
+  trigger_databricks_job.py  # POST /api/2.1/jobs/run-now
+notebooks/
+  load_bronze.ipynb          # S3 → Delta Bronze
+  silver_databricks.ipynb    # transformações Silver (PySpark)
+dbt/models/
+  staging/                   # limpeza e parse (Silver)
+  marts/                     # modelo estrela (Gold)
+.github/workflows/
+  pipeline.yml               # trigger manual e schedule
+```
 
-- **Tribunais:** TJRS, TJSC, TJPR, TJSP
-- **Período:** 2024 em diante (configurável)
-- **Grau:** Primeiro grau (G1)
-- **Métricas disponíveis na Gold:** TMP (`dias_desde_ajuizamento`), volume por tribunal/classe/órgão/período
+## Dados e idempotência
 
-## Dados
-
-Os arquivos JSON da camada bronze ficam no S3 (`s3://judicial-analytics-storage/bronze/`) e não são versionados. Para regenerar, execute a etapa de ingestão com suas credenciais.
+Os JSONs (Bronze) e as tabelas Delta vivem no S3 (`s3://judicial-analytics-storage/`) e não são versionados. O watermark (`state/watermark.json`) registra a última data processada por tribunal, então reexecuções continuam de onde pararam. A prioridade da data de início é: watermark → input manual (`DATA_INICIO`) → padrão `2024-01-01`.
