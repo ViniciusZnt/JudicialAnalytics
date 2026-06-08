@@ -124,14 +124,16 @@ def main() -> None:
         logger.info("[%s] Iniciando processamento", tribunal)
 
         data_inicio = (
-            os.getenv("DATA_INICIO")
-            or watermark.get(tribunal)
+            watermark.get(tribunal)
+            or os.getenv("DATA_INICIO")
             or DATA_INICIO_PADRAO
         )
         data_fim = data_fim_global
 
         if watermark.get(tribunal):
             logger.info("[%s] Watermark encontrado — continuando de %s", tribunal, watermark.get(tribunal))
+        elif os.getenv("DATA_INICIO"):
+            logger.info("[%s] Sem watermark — usando data_inicio do input manual: %s", tribunal, os.getenv("DATA_INICIO"))
         else:
             logger.info("[%s] Sem watermark — usando data padrão de início: %s", tribunal, DATA_INICIO_PADRAO)
 
