@@ -1,0 +1,10 @@
+name: judicial_analytics
+version: '1.0.0'
+profile: judicial
+model-paths: ["models"]
+models:
+  judicial_analytics:
+    marts:
+      +materialized: table
+      fato_movimentos:
+        +materialized: incremental

@@ -1,0 +1,11 @@
+judicial:
+  target: prod
+  outputs:
+    prod:
+      type: databricks
+      host: https://dbc-xxxx.cloud.databricks.com
+      http_path: /sql/1.0/warehouses/xxxx
+      token: "{{ env_var('DATABRICKS_TOKEN') }}"
+      catalog: judicial
+      schema: gold
+      threads: 4

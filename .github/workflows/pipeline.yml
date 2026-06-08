@@ -1,8 +1,8 @@
 name: Pipeline Judicial
 
 on:
-  schedule:
-    - cron: '0 6 * * *'
+#  schedule:
+#    - cron: '0 6 * * *'
   workflow_dispatch:
     inputs:
       inicio:
@@ -41,4 +41,5 @@ jobs:
         env:
           DATABRICKS_HOST:  ${{ secrets.DATABRICKS_HOST }}
           DATABRICKS_TOKEN: ${{ secrets.DATABRICKS_TOKEN }}
+          DATABRICKS_JOB_ID:  ${{ secrets.DATABRICKS_JOB_ID }}
         run: python -m ingestion.trigger_databricks_job

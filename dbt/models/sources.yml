@@ -1,0 +1,16 @@
+version: 2
+
+sources:
+  - name: bronze
+    catalog: judicial
+    schema: bronze
+    tables:
+      - name: datajud_raw
+        description: "Dados brutos do DataJud — um hit Elasticsearch por linha"
+
+  - name: silver
+    catalog: judicial
+    schema: silver
+    tables:
+      - name: movimentos
+        description: "Movimentos processuais explodidos e enriquecidos"

@@ -5,7 +5,7 @@ import requests
 
 logger = logging.getLogger(__name__)
 
-JOB_ID = 0  # preencher no M7
+JOB_ID = int(os.getenv("DATABRICKS_JOB_ID", "0"))
 
 
 def disparar() -> None:

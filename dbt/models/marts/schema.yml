@@ -1,0 +1,74 @@
+version: 2
+
+models:
+  - name: dim_tribunais
+    description: "Dimensão de tribunais — uma linha por sigla"
+    columns:
+      - name: sk_tribunal
+        description: "Surrogate key gerada com sha2 sobre sigla_tribunal"
+        tests: [not_null, unique]
+      - name: sigla_tribunal
+        tests: [not_null, unique]
+
+  - name: dim_classes
+    description: "Dimensão de classes processuais CNJ"
+    columns:
+      - name: sk_classe
+        tests: [not_null, unique]
+      - name: codigo_classe
+        tests: [not_null]
+
+  - name: dim_assuntos
+    description: "Dimensão de assuntos processuais CNJ — lida direto da Bronze"
+    columns:
+      - name: sk_assunto
+        tests: [not_null, unique]
+      - name: codigo_assunto
+        tests: [not_null]
+
+  - name: dim_orgaos
+    description: "Dimensão de órgãos julgadores (varas, câmaras)"
+    columns:
+      - name: sk_orgao
+        tests: [not_null, unique]
+      - name: fk_tribunal
+        tests:
+          - not_null
+          - relationships:
+              to: ref('dim_tribunais')
+              field: sk_tribunal
+
+  - name: dim_calendario
+    description: "Dimensão de datas de 2020-01-01 até hoje"
+    columns:
+      - name: sk_data
+        tests: [not_null, unique]
+      - name: data
+        tests: [not_null, unique]
+
+  - name: fato_movimentos
+    description: "Fato de movimentos processuais — uma linha por evento"
+    columns:
+      - name: fk_tribunal
+        tests:
+          - not_null
+          - relationships:
+              to: ref('dim_tribunais')
+              field: sk_tribunal
+      - name: fk_classe
+        tests:
+          - not_null
+          - relationships:
+              to: ref('dim_classes')
+              field: sk_classe
+      - name: fk_orgao
+        tests:
+          - relationships:
+              to: ref('dim_orgaos')
+              field: sk_orgao
+      - name: fk_data_movimento
+        tests: [not_null]
+      - name: dias_desde_ajuizamento
+        tests:
+          - dbt_utils.expression_is_true:
+              expression: ">= 0"
