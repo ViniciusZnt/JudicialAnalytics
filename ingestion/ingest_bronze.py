@@ -2,8 +2,8 @@ import json
 import logging
 import os
 import time
-from datetime import date, datetime
 import calendar
+from datetime import date
 
 import boto3
 from botocore.exceptions import ClientError
@@ -101,42 +101,28 @@ def ingerir_tribunal(client: DatajudClient, s3, tribunal: str,
 
     return False
 
-# ── Validação Data ─────────────────────────────────────────────────────────────────
-def data_valida(data_str: str) -> bool:
-    try:
-        datetime.strptime(data_str, "%Y-%m-%d")
-        datetime.isocalendar()
-        return True
-    except ValueError:
-        return False
+# ── Validação de data ──────────────────────────────────────────────────────────
 
-def corrigir_data(data_str: str) -> str:
-    """
-    Recebe uma string no formato 'YYYY/MM/DD' e retorna a data corrigida.
-    Se o dia for maior que o último dia do mês, ajusta para o último dia válido.
-    Se o dia for menor que 1, ajusta para 1.
-    Se o mês estiver fora de 1-12, ajusta para o limite mais próximo.
+def normalizar_data(data_str: str, rotulo: str) -> str:
+    """Valida e normaliza uma data no formato 'YYYY-MM-DD'.
+
+    Quando o mês ou o dia estão fora da faixa válida (ex.: '2025-02-30' ou
+    '2025-13-01'), ajusta para o limite mais próximo em vez de falhar. Levanta
+    ValueError se a string não for sequer interpretável como ano-mês-dia.
     """
     try:
-        # Tenta interpretar diretamente a data
-        ano, mes, dia = map(int, data_str.split('/'))
-    except (ValueError, AttributeError):
-        raise ValueError("Formato inválido. Use 'YYYY/MM/DD'")
+        ano, mes, dia = map(int, data_str.split("-"))
+    except (ValueError, AttributeError) as exc:
+        raise ValueError(f"{rotulo} inválida: '{data_str}' — use o formato YYYY-MM-DD") from exc
 
-    # Ajusta mês para o intervalo [1, 12]
     mes = max(1, min(mes, 12))
-
-    # Obtém o último dia do mês
     ultimo_dia = calendar.monthrange(ano, mes)[1]
+    dia = max(1, min(dia, ultimo_dia))
 
-    # Ajusta o dia
-    if dia < 1:
-        dia = 1
-    elif dia > ultimo_dia:
-        dia = ultimo_dia
-
-    return f"{ano:04d}/{mes:02d}/{dia:02d}"
-
+    data_corrigida = f"{ano:04d}-{mes:02d}-{dia:02d}"
+    if data_corrigida != data_str:
+        logger.warning("[CONFIG] %s ajustada de '%s' para '%s'", rotulo, data_str, data_corrigida)
+    return data_corrigida
 
 
 # ── Main ─────────────────────────────────────────────────────────────────────
@@ -149,16 +135,8 @@ def main() -> None:
     s3        = boto3.client("s3")
     watermark = ler_watermark(s3)
 
-    data_fim_global = os.getenv("DATA_FIM") or str(date.today())
-    logger.info("[CONFIG] Data fim global: %s", data_fim_global)
-    
-    if data_valida(data_fim_global):
-        logger.info("[CONFIG] Data fim global: %s", data_fim_global)
-        data_fim = data_fim_global
-    else:
-        data_fim = corrigir_data(data_fim_global)
-        logger.error("[CONFIG] DATA_FIM inválida: '%s' — Corrijido para '%s'", data_fim_global, data_fim)
-    
+    data_fim = normalizar_data(os.getenv("DATA_FIM") or str(date.today()), "DATA_FIM")
+    logger.info("[CONFIG] Data fim global: %s", data_fim)
 
     origem_inicio = "variável de ambiente (override manual)" if os.getenv("DATA_INICIO") else "watermark ou padrão"
     logger.info("[CONFIG] Origem do data_inicio: %s", origem_inicio)
@@ -169,18 +147,17 @@ def main() -> None:
         logger.info("=" * 60)
         logger.info("[%s] Iniciando processamento", tribunal)
 
-        data_inicio = (
-            watermark.get(tribunal)
-            or os.getenv("DATA_INICIO")
-            or DATA_INICIO_PADRAO
-        )
-
         if watermark.get(tribunal):
-            logger.info("[%s] Watermark encontrado — continuando de %s", tribunal, watermark.get(tribunal))
+            data_inicio_bruto = watermark[tribunal]
+            logger.info("[%s] Watermark encontrado — continuando de %s", tribunal, data_inicio_bruto)
         elif os.getenv("DATA_INICIO"):
-            logger.info("[%s] Sem watermark — usando data_inicio do input manual: %s", tribunal, os.getenv("DATA_INICIO"))
+            data_inicio_bruto = os.getenv("DATA_INICIO")
+            logger.info("[%s] Sem watermark — usando data_inicio do input manual: %s", tribunal, data_inicio_bruto)
         else:
-            logger.info("[%s] Sem watermark — usando data padrão de início: %s", tribunal, DATA_INICIO_PADRAO)
+            data_inicio_bruto = DATA_INICIO_PADRAO
+            logger.info("[%s] Sem watermark — usando data padrão de início: %s", tribunal, data_inicio_bruto)
+
+        data_inicio = normalizar_data(data_inicio_bruto, f"data_inicio[{tribunal}]")
 
         if data_inicio >= data_fim:
             logger.info("[%s] Já atualizado até %s — nada a buscar, pulando", tribunal, data_inicio)
