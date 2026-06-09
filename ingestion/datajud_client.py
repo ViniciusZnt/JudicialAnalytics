@@ -31,6 +31,16 @@ class DatajudClient:
             "Content-Type": "application/json",
         })
 
+    @staticmethod
+    def _to_datajud_ts(data: str, fim: bool) -> str:
+        """Converte 'YYYY-MM-DD' para o formato do campo dataAjuizamento ('YYYYMMDDHHMMSS').
+
+        O campo dataAjuizamento na API DataJud é uma data no formato yyyyMMddHHmmss;
+        consultar com data ISO ('2025-02-28') não casa e retorna 0 resultados.
+        """
+        compacta = data.replace("-", "")
+        return compacta + ("235959" if fim else "000000")
+
     def search_page(self, tribunal: str, data_inicio: str, data_fim: str, search_after: list = None) -> dict:
         url = self.base_url + f"api_publica_{tribunal.lower()}/_search"
 
@@ -39,8 +49,8 @@ class DatajudClient:
             "query": {
                 "range": {
                     "dataAjuizamento": {
-                        "gte": data_inicio,
-                        "lte": data_fim,
+                        "gte": self._to_datajud_ts(data_inicio, fim=False),
+                        "lte": self._to_datajud_ts(data_fim, fim=True),
                     }
                 }
             },

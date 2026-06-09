@@ -2,7 +2,8 @@ import json
 import logging
 import os
 import time
-from datetime import date
+from datetime import date, datetime
+import calendar
 
 import boto3
 from botocore.exceptions import ClientError
@@ -100,6 +101,43 @@ def ingerir_tribunal(client: DatajudClient, s3, tribunal: str,
 
     return False
 
+# ── Validação Data ─────────────────────────────────────────────────────────────────
+def data_valida(data_str: str) -> bool:
+    try:
+        datetime.strptime(data_str, "%Y-%m-%d")
+        datetime.isocalendar()
+        return True
+    except ValueError:
+        return False
+
+def corrigir_data(data_str: str) -> str:
+    """
+    Recebe uma string no formato 'YYYY/MM/DD' e retorna a data corrigida.
+    Se o dia for maior que o último dia do mês, ajusta para o último dia válido.
+    Se o dia for menor que 1, ajusta para 1.
+    Se o mês estiver fora de 1-12, ajusta para o limite mais próximo.
+    """
+    try:
+        # Tenta interpretar diretamente a data
+        ano, mes, dia = map(int, data_str.split('/'))
+    except (ValueError, AttributeError):
+        raise ValueError("Formato inválido. Use 'YYYY/MM/DD'")
+
+    # Ajusta mês para o intervalo [1, 12]
+    mes = max(1, min(mes, 12))
+
+    # Obtém o último dia do mês
+    ultimo_dia = calendar.monthrange(ano, mes)[1]
+
+    # Ajusta o dia
+    if dia < 1:
+        dia = 1
+    elif dia > ultimo_dia:
+        dia = ultimo_dia
+
+    return f"{ano:04d}/{mes:02d}/{dia:02d}"
+
+
 
 # ── Main ─────────────────────────────────────────────────────────────────────
 
@@ -113,6 +151,14 @@ def main() -> None:
 
     data_fim_global = os.getenv("DATA_FIM") or str(date.today())
     logger.info("[CONFIG] Data fim global: %s", data_fim_global)
+    
+    if data_valida(data_fim_global):
+        logger.info("[CONFIG] Data fim global: %s", data_fim_global)
+        data_fim = data_fim_global
+    else:
+        data_fim = corrigir_data(data_fim_global)
+        logger.error("[CONFIG] DATA_FIM inválida: '%s' — Corrijido para '%s'", data_fim_global, data_fim)
+    
 
     origem_inicio = "variável de ambiente (override manual)" if os.getenv("DATA_INICIO") else "watermark ou padrão"
     logger.info("[CONFIG] Origem do data_inicio: %s", origem_inicio)
@@ -128,7 +174,6 @@ def main() -> None:
             or os.getenv("DATA_INICIO")
             or DATA_INICIO_PADRAO
         )
-        data_fim = data_fim_global
 
         if watermark.get(tribunal):
             logger.info("[%s] Watermark encontrado — continuando de %s", tribunal, watermark.get(tribunal))
