@@ -1,10 +1,9 @@
--- models/marts/dim_orgaos.sql
 -- Órgãos julgadores (varas, câmaras).
 -- Referencia dim_tribunais via ref() — o dbt detecta essa dependência
 -- e garante que dim_tribunais é materializada antes.
 
 select
-    {{ dbt_utils.generate_surrogate_key(['m.codigo_orgao']) }} as sk_orgao,
+    {{ dbt_utils.generate_surrogate_key(['m.codigo_orgao', 'm.sigla_tribunal']) }} as sk_orgao,
     m.codigo_orgao,
     m.nome_orgao,
     t.sk_tribunal as fk_tribunal

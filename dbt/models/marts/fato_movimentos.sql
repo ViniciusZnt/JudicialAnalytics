@@ -44,7 +44,9 @@ select
 from {{ source('silver', 'movimentos') }} m
 left join {{ ref('dim_tribunais') }} t using (sigla_tribunal)
 left join {{ ref('dim_classes') }}   c using (codigo_classe)
-left join {{ ref('dim_orgaos') }}    o using (codigo_orgao)
+left join {{ ref('dim_orgaos') }} o
+    on o.codigo_orgao = m.codigo_orgao
+    and o.fk_tribunal = t.sk_tribunal
 
 {% if is_incremental() %}
 where cast(date_format(cast(m.data_movimento as date), 'yyyyMMdd') as int) > (
