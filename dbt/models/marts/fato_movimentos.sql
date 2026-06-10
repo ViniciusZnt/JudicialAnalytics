@@ -47,8 +47,8 @@ left join {{ ref('dim_classes') }}   c using (codigo_classe)
 left join {{ ref('dim_orgaos') }}    o using (codigo_orgao)
 
 {% if is_incremental() %}
-where m.data_movimento > (
-    select max(dest.data_movimento)
+where cast(date_format(cast(m.data_movimento as date), 'yyyyMMdd') as int) > (
+    select coalesce(max(dest.fk_data_movimento), 0)
     from {{ this }} dest
 )
 {% endif %}
