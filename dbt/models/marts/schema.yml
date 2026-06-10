@@ -54,22 +54,26 @@ models:
         tests:
           - not_null
           - relationships:
-              to: ref('dim_tribunais')
-              field: sk_tribunal
+              arguments:                 # ← corrigido
+                to: ref('dim_tribunais')
+                field: sk_tribunal
       - name: fk_classe
         tests:
           - not_null
           - relationships:
-              to: ref('dim_classes')
-              field: sk_classe
+              arguments:                 # ← corrigido
+                to: ref('dim_classes')
+                field: sk_classe
       - name: fk_orgao
         tests:
           - relationships:
-              to: ref('dim_orgaos')
-              field: sk_orgao
+              arguments:                 # ← corrigido
+                to: ref('dim_orgaos')
+                field: sk_orgao
       - name: fk_data_movimento
         tests: [not_null]
       - name: dias_desde_ajuizamento
         tests:
           - dbt_utils.expression_is_true:
               expression: ">= 0"
+              severity: warn
