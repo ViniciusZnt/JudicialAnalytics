@@ -35,8 +35,9 @@ models:
         tests:
           - not_null
           - relationships:
-              to: ref('dim_tribunais')
-              field: sk_tribunal
+              arguments:
+                to: ref('dim_tribunais')
+                field: sk_tribunal
 
   - name: dim_calendario
     description: "Dimensão de datas de 2020-01-01 até hoje"

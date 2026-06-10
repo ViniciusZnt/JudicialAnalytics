@@ -8,6 +8,11 @@ select
     assunto.codigo as codigo_assunto,
     assunto.nome   as nome_assunto
 from {{ source('bronze', 'datajud_raw') }}
-lateral view explode(_source.assuntos) t as assunto
+lateral view explode(
+    from_json(
+        _source.assuntos,
+        'array<struct<codigo:bigint,nome:string>>'
+    )
+) t as assunto
 where assunto.codigo is not null
 group by 1, 2, 3
