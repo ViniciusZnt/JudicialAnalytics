@@ -1,6 +1,6 @@
 -- models/marts/dim_orgaos.sql
 -- Órgãos julgadores (varas, câmaras).
--- Referencia dim_tribunais via {{ ref() }} — o dbt detecta essa dependência
+-- Referencia dim_tribunais via ref() — o dbt detecta essa dependência
 -- e garante que dim_tribunais é materializada antes.
 
 select
