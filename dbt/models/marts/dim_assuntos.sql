@@ -4,15 +4,15 @@
 -- LATERAL VIEW EXPLODE expande o array: uma linha por assunto por processo.
 
 select
-    {{ dbt_utils.generate_surrogate_key(['assunto.codigo']) }} as sk_assunto,
-    assunto.codigo as codigo_assunto,
-    assunto.nome   as nome_assunto
-from {{ source('bronze', 'datajud_raw') }}
-lateral view explode(
-    from_json(
+    {{ dbt_utils.generate_surrogate_key(['codigo_assunto']) }} as sk_assunto,
+    codigo_assunto,
+    nome_assunto
+from {{ source('bronze', 'datajud_raw') }},
+inline(
+    transform(
         _source.assuntos,
-        'array<struct<codigo:bigint,nome:string>>'
+        x -> from_json(x, 'struct<codigo:bigint,nome:string>')
     )
-) t as assunto
-where assunto.codigo is not null
+) as (codigo_assunto, nome_assunto)
+where codigo_assunto is not null
 group by 1, 2, 3

@@ -8,7 +8,6 @@
 --
 -- tipo_fase: mapeamento de codigo_movimento para fase analítica,
 -- conforme tabela CNJ de movimentos (ranges de código por fase).
-
 {{
     config(
         materialized='incremental',
@@ -20,15 +19,11 @@
 
 select
     m.numero_processo,
-
-    -- chaves estrangeiras para dimensões
-    t.sk_tribunal                                                                as fk_tribunal,
-    c.sk_classe                                                                  as fk_classe,
-    o.sk_orgao                                                                   as fk_orgao,
-    cast(date_format(cast(m.data_movimento   as date), 'yyyyMMdd') as int)      as fk_data_movimento,
-    cast(date_format(cast(m.data_ajuizamento as date), 'yyyyMMdd') as int)      as fk_data_ajuizamento,
-
-    -- atributos degenerados — códigos sem dimensão própria
+    t.sk_tribunal                                                               as fk_tribunal,
+    c.sk_classe                                                                 as fk_classe,
+    o.sk_orgao                                                                  as fk_orgao,
+    cast(date_format(cast(m.data_movimento   as date), 'yyyyMMdd') as int)     as fk_data_movimento,
+    cast(date_format(cast(m.data_ajuizamento as date), 'yyyyMMdd') as int)     as fk_data_ajuizamento,
     m.codigo_movimento,
     m.grau,
     case
@@ -40,9 +35,7 @@ select
         when m.codigo_movimento between 500 and 599 then 'execução'
         when m.codigo_movimento between 600 and 699 then 'arquivamento'
         else 'outro'
-    end                                                                          as tipo_fase,
-
-    -- métricas
+    end                                                                         as tipo_fase,
     m.dias_desde_ajuizamento,
     m.dias_desde_ultimo_movimento,
     m.is_ultimo_movimento
@@ -53,5 +46,8 @@ left join {{ ref('dim_classes') }}   c using (codigo_classe)
 left join {{ ref('dim_orgaos') }}    o using (codigo_orgao)
 
 {% if is_incremental() %}
-where m.data_movimento > (select max(data_movimento) from {{ this }})
+where m.data_movimento > (
+    select max(dest.data_movimento)
+    from {{ this }} dest     -- alias explícito evita ambiguidade com o 'm' externo
+)
 {% endif %}
