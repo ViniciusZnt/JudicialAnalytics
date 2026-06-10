@@ -19,6 +19,7 @@
 
 select
     m.numero_processo,
+    m.data_movimento,                                                           -- ← ancoragem incremental
     t.sk_tribunal                                                               as fk_tribunal,
     c.sk_classe                                                                 as fk_classe,
     o.sk_orgao                                                                  as fk_orgao,
@@ -48,6 +49,6 @@ left join {{ ref('dim_orgaos') }}    o using (codigo_orgao)
 {% if is_incremental() %}
 where m.data_movimento > (
     select max(dest.data_movimento)
-    from {{ this }} dest     -- alias explícito evita ambiguidade com o 'm' externo
+    from {{ this }} dest
 )
 {% endif %}
