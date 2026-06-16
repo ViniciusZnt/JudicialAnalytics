@@ -22,6 +22,18 @@ DATA_INICIO_PADRAO = "2024-01-01"
 MAX_TENTATIVAS     = 3
 ESPERA_BASE        = 10  # segundos entre tentativas
 
+# Timeout do cliente por tribunal. Margem extra para TJRS/TJPR, que têm volume
+# maior por mês. Obs.: o gateway da API corta em ~60s, então timeouts acima disso
+# só ajudam se a resposta vier entre 60s e o valor abaixo; o fator decisivo
+# continua sendo o page size pequeno no datajud_client.
+TIMEOUT_POR_TRIBUNAL = {
+    "TJRS": 120,
+    "TJPR": 120,
+    "TJSC": 60,
+    "TJSP": 60,
+}
+TIMEOUT_PADRAO     = 60
+
 
 # ── Watermark ────────────────────────────────────────────────────────────────
 
@@ -131,7 +143,7 @@ def main() -> None:
     logger.info("[INICIO] Iniciando pipeline de ingestão DataJud")
     logger.info("[INICIO] Tribunais configurados: %s", TRIBUNAIS)
 
-    client    = DatajudClient(api_key=os.environ["DATAJUD_API_KEY"], timeout=60)
+    api_key   = os.environ["DATAJUD_API_KEY"]
     s3        = boto3.client("s3")
     watermark = ler_watermark(s3)
 
@@ -163,6 +175,10 @@ def main() -> None:
             logger.info("[%s] Já atualizado até %s — nada a buscar, pulando", tribunal, data_inicio)
             resultados[tribunal] = "pulado"
             continue
+
+        timeout = TIMEOUT_POR_TRIBUNAL.get(tribunal, TIMEOUT_PADRAO)
+        logger.info("[%s] Timeout do cliente: %ds", tribunal, timeout)
+        client  = DatajudClient(api_key=api_key, timeout=timeout)
 
         sucesso = ingerir_tribunal(client, s3, tribunal, data_inicio, data_fim)
 

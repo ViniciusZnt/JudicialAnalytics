@@ -45,7 +45,20 @@ class DatajudClient:
         url = self.base_url + f"api_publica_{tribunal.lower()}/_search"
 
         body = {
-            "size": 10000,
+            # size pequeno é o que mantém a resposta abaixo do gateway de ~60s da API.
+            # Em testes: size 10000 → 504 (60s); 1000 → 49,9s (no limite); 500 → 9,5s.
+            "size": 500,
+            "_source": [
+                "numeroProcesso",
+                "tribunal",
+                "grau",
+                "dataAjuizamento",
+                "classe",
+                "orgaoJulgador",
+                "movimentos",
+                "assuntos",
+                "nivelSigilo",
+            ],
             "query": {
                 "range": {
                     "dataAjuizamento": {
