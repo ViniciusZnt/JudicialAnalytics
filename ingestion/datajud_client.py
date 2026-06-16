@@ -153,7 +153,7 @@ class DatajudClient:
                     page, tentativa, self.max_retentativas_pagina, espera, exc,
                 )
                 time.sleep(espera)
-        raise RuntimeError("inalcançável")  # pragma: no cover
+        raise RuntimeError("inalcançável")
 
     @staticmethod
     def _safe_json(response):
