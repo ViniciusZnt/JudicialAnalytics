@@ -35,7 +35,7 @@ class DatajudClient:
         api_key: str,
         base_url: str = DEFAULT_BASE_URL,
         timeout: int = 30,
-        pausa_entre_paginas: float = 0.5,
+        pausa_entre_paginas: float = 1.0,
         max_retentativas_pagina: int = 5,
         espera_base_retry: int = 10,
     ):
@@ -55,8 +55,9 @@ class DatajudClient:
 
         body = {
             # size pequeno é o que mantém a resposta abaixo do gateway de ~60s da API.
-            # Em testes: size 10000 → 504 (60s); 1000 → 49,9s (no limite); 500 → 9,5s.
-            "size": 1000,
+            # Em testes: size 10000 → 504 (60s); 1000 → 30-50s e às vezes 504; 500 → ~9,5s.
+            # Aumentar o size pra fazer menos requests NÃO ajuda: troca 429 por 504.
+            "size": 500,
             "_source": [
                 "numeroProcesso",
                 "tribunal",
