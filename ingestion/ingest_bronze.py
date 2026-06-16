@@ -67,11 +67,13 @@ def salvar_watermark(s3, watermark: dict) -> None:
 
 def ingerir_tribunal(client: DatajudClient, s3, tribunal: str,
                      data_inicio: str, data_fim: str) -> bool:
-
     for tentativa in range(1, MAX_TENTATIVAS + 1):
         logger.info("[%s] Tentativa %d/%d — buscando processos de %s até %s",
                     tribunal, tentativa, MAX_TENTATIVAS, data_inicio, data_fim)
         try:
+            # Reinicia a coleta a cada tentativa: paginate() recomeça da página 1
+            # (o cursor não é persistido), então acumular entre tentativas geraria
+            # registros duplicados.
             dados = []
             pagina = 1
 
@@ -100,7 +102,6 @@ def ingerir_tribunal(client: DatajudClient, s3, tribunal: str,
             logger.info("[%s] Arquivo gravado com sucesso — %d registros em s3://%s/%s",
                         tribunal, len(dados), BUCKET, key)
             return True
-
         except TransientApiError as e:
             if tentativa == MAX_TENTATIVAS:
                 logger.error("[%s] Falhou após %d tentativas — abortando este tribunal. Erro: %s",
