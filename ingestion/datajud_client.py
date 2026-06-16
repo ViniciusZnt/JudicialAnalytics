@@ -56,7 +56,7 @@ class DatajudClient:
         body = {
             # size pequeno é o que mantém a resposta abaixo do gateway de ~60s da API.
             # Em testes: size 10000 → 504 (60s); 1000 → 49,9s (no limite); 500 → 9,5s.
-            "size": 500,
+            "size": 1000,
             "_source": [
                 "numeroProcesso",
                 "tribunal",

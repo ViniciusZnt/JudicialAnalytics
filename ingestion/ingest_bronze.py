@@ -19,7 +19,7 @@ BUCKET             = "judicial-analytics-storage"
 TRIBUNAIS          = ["TJRS", "TJSC", "TJPR", "TJSP"]
 WATERMARK_KEY      = "state/watermark.json"
 DATA_INICIO_PADRAO = "2024-01-01"
-MAX_TENTATIVAS     = 3
+MAX_TENTATIVAS     = 10
 ESPERA_BASE        = 10  # segundos entre tentativas
 
 # Timeout do cliente por tribunal. Margem extra para TJRS/TJPR, que têm volume
